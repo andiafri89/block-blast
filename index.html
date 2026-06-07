@@ -1007,20 +1007,23 @@
             document.getElementById('newGameBtn').addEventListener('click', newGame);
             document.getElementById('playAgainBtn').addEventListener('click', newGame);
 
-            boardEl.addEventListener('click', onBoardClick);
+            // Preview hover
             boardEl.addEventListener('mousemove', onBoardHover);
             boardEl.addEventListener('mouseleave', () => {
                 lastHoverRow = -1;
                 lastHoverCol = -1;
             });
 
-            boardEl.addEventListener('touchstart', onTouchStart, { passive: false });
+            // Touch untuk preview
             boardEl.addEventListener('touchmove', onTouchMove, { passive: false });
-            boardEl.addEventListener('touchend', onTouchEnd, { passive: false });
 
-            // Document-level listeners untuk floating block
+            // Document-level listeners untuk floating block movement
             document.addEventListener('mousemove', onDocumentMouseMove);
             document.addEventListener('touchmove', onDocumentTouchMove, { passive: false });
+
+            // RELEASE: mouseup / touchend untuk meletakkan atau membatalkan
+            document.addEventListener('mouseup', onDocumentMouseUp);
+            document.addEventListener('touchend', onDocumentTouchEnd, { passive: false });
 
             boardEl.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
@@ -1125,11 +1128,17 @@
 
                 option.appendChild(gridDiv);
 
-                option.addEventListener('click', (e) => {
+                option.addEventListener('mousedown', (e) => {
                     e.stopPropagation();
                     if (isAnimating || isGameOver) return;
                     selectBlock(idx, e.clientX, e.clientY);
                 });
+                option.addEventListener('touchstart', (e) => {
+                    e.stopPropagation();
+                    if (isAnimating || isGameOver) return;
+                    const touch = e.touches[0];
+                    selectBlock(idx, touch.clientX, touch.clientY);
+                }, { passive: false });
 
                 option.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
@@ -1528,22 +1537,32 @@
             }
         }
 
-        let touchStartX = 0, touchStartY = 0;
-        let touchTargetRow = -1, touchTargetCol = -1;
+        function onDocumentMouseUp(e) {
+            if (isAnimating || isGameOver || !isFloating) return;
+            const block = getSelectedBlock();
+            if (!block) return;
 
-        function onTouchStart(e) {
-            if (isAnimating || isGameOver) return;
-            const touch = e.touches[0];
-            touchStartX = touch.clientX;
-            touchStartY = touch.clientY;
-
-            const target = document.elementFromPoint(touch.clientX, touch.clientY);
-            const cell = target?.closest('.cell');
+            const shape = block.shape;
+            // Cek apakah cursor di atas cell board saat release
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            const cell = el?.closest('.cell');
             if (cell) {
-                touchTargetRow = parseInt(cell.dataset.row);
-                touchTargetCol = parseInt(cell.dataset.col);
+                const row = parseInt(cell.dataset.row);
+                const col = parseInt(cell.dataset.col);
+                if (!isNaN(row) && !isNaN(col)) {
+                    const pr = Math.max(0, Math.min(GRID_SIZE - shape.length, row));
+                    const pc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, col));
+                    if (canPlace(shape, pr, pc)) {
+                        tryPlaceBlock(selectedBlockIdx, pr, pc);
+                        return;
+                    }
+                }
             }
+            // Release di luar board atau invalid -> batal
+            deselectBlock();
         }
+
+        let touchTargetRow = -1, touchTargetCol = -1;
 
         function onTouchMove(e) {
             e.preventDefault();
@@ -1572,17 +1591,28 @@
             showPreview(shape, dr, dc, valid);
         }
 
-        function onTouchEnd(e) {
-            if (isAnimating || isGameOver) return;
+        function onDocumentTouchEnd(e) {
+            if (isAnimating || isGameOver || !isFloating) return;
             const block = getSelectedBlock();
             if (!block) return;
 
-            const shape = block.shape;
-            const dr = Math.max(0, Math.min(GRID_SIZE - shape.length, touchTargetRow));
-            const dc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, touchTargetCol));
-
-            tryPlaceBlock(selectedBlockIdx, dr, dc);
-
+            // Gunakan lastHoverRow/lastHoverCol yang di-set oleh onTouchMove
+            if (lastHoverRow >= 0 && lastHoverCol >= 0) {
+                const shape = block.shape;
+                const pr = Math.max(0, Math.min(GRID_SIZE - shape.length, lastHoverRow));
+                const pc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, lastHoverCol));
+                if (canPlace(shape, pr, pc)) {
+                    tryPlaceBlock(selectedBlockIdx, pr, pc);
+                    touchTargetRow = -1;
+                    touchTargetCol = -1;
+                    lastHoverRow = -1;
+                    lastHoverCol = -1;
+                    clearPreview();
+                    return;
+                }
+            }
+            // Release di luar board atau invalid -> batal
+            deselectBlock();
             touchTargetRow = -1;
             touchTargetCol = -1;
             lastHoverRow = -1;
