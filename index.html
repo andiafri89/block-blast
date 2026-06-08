@@ -789,46 +789,6 @@
                 font-size: 0.7rem;
             }
         }
-
-        #floatingBlock {
-            position: fixed;
-            pointer-events: none;
-            z-index: 1000;
-            display: flex;
-            align-items: flex-start;
-            justify-content: flex-start;
-            transform: translate(0, 0);
-            transition: left 0.12s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                        top 0.12s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                        opacity 0.2s ease;
-        }
-
-        #floatingBlock.invalid {
-            opacity: 0.4;
-            filter: saturate(0.3) brightness(0.6);
-        }
-
-        #floatingBlock.invalid .block-cell.filled-bc {
-            box-shadow: inset 0 1px 2px rgba(255, 0, 0, 0.25), 0 0 4px rgba(255, 0, 0, 0.1);
-        }
-
-        #floatingBlock .block-grid {
-            display: grid;
-            gap: var(--grid-gap);
-        }
-
-        #floatingBlock .block-cell {
-            border-radius: 6px;
-        }
-
-        #floatingBlock .block-cell.filled-bc {
-            box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.25);
-        }
-
-        #floatingBlock .block-cell.empty-bc {
-            background: transparent !important;
-        }
-
     </style>
 </head>
 
@@ -919,10 +879,6 @@
         let lastHoverRow = -1;
         let lastHoverCol = -1;
         let touchPos = null;
-        let isFloating = false;
-        let floatingBlockEl = null;
-        let floatingBlockData = null;
-        let floatingCellSize = 30;
 
         let boardEl, trayEl, scoreValEl, bestValEl, comboPopupEl;
         let gameOverOverlay, finalScoreEl, newBestEl, finalBestEl, finalBestValEl;
@@ -998,37 +954,26 @@
             // Load best score dari server
             fetchBestScore();
 
-            // Create floating block element
-            floatingBlockEl = document.createElement('div');
-            floatingBlockEl.id = 'floatingBlock';
-            floatingBlockEl.style.display = 'none';
-            document.body.appendChild(floatingBlockEl);
-
             document.getElementById('newGameBtn').addEventListener('click', newGame);
             document.getElementById('playAgainBtn').addEventListener('click', newGame);
 
-            // Preview hover
+            boardEl.addEventListener('click', onBoardClick);
             boardEl.addEventListener('mousemove', onBoardHover);
             boardEl.addEventListener('mouseleave', () => {
                 lastHoverRow = -1;
                 lastHoverCol = -1;
             });
 
-            // Touch untuk preview
+            boardEl.addEventListener('touchstart', onTouchStart, { passive: false });
             boardEl.addEventListener('touchmove', onTouchMove, { passive: false });
-
-            // Document-level listeners untuk floating block movement
-            document.addEventListener('mousemove', onDocumentMouseMove);
-            document.addEventListener('touchmove', onDocumentTouchMove, { passive: false });
-
-            // RELEASE: mouseup / touchend untuk meletakkan atau membatalkan
-            document.addEventListener('mouseup', onDocumentMouseUp);
-            document.addEventListener('touchend', onDocumentTouchEnd, { passive: false });
+            boardEl.addEventListener('touchend', onTouchEnd, { passive: false });
 
             boardEl.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
                 if (selectedBlockIdx >= 0) {
-                    deselectBlock();
+                    selectedBlockIdx = -1;
+                    clearPreview();
+                    renderTray();
                 }
             });
 
@@ -1054,7 +999,6 @@
             isGameOver = false;
             isAnimating = false;
             selectedBlockIdx = -1;
-            hideFloatingBlock();
             previewCells = [];
             lastHoverRow = -1;
             lastHoverCol = -1;
@@ -1128,23 +1072,19 @@
 
                 option.appendChild(gridDiv);
 
-                option.addEventListener('mousedown', (e) => {
+                option.addEventListener('click', (e) => {
                     e.stopPropagation();
                     if (isAnimating || isGameOver) return;
-                    selectBlock(idx, e.clientX, e.clientY);
+                    selectBlock(idx);
                 });
-                option.addEventListener('touchstart', (e) => {
-                    e.stopPropagation();
-                    if (isAnimating || isGameOver) return;
-                    const touch = e.touches[0];
-                    selectBlock(idx, touch.clientX, touch.clientY);
-                }, { passive: false });
 
                 option.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     if (selectedBlockIdx >= 0) {
-                        deselectBlock();
+                        selectedBlockIdx = -1;
+                        clearPreview();
+                        renderTray();
                     }
                 });
 
@@ -1152,21 +1092,14 @@
             });
         }
 
-        function selectBlock(idx, clientX, clientY) {
+        function selectBlock(idx) {
             clearPreview();
             if (selectedBlockIdx === idx) {
-                deselectBlock();
+                selectedBlockIdx = -1;
             } else {
                 selectedBlockIdx = idx;
-                const block = availableBlocks[idx];
-                if (block) {
-                    showFloatingBlock(block);
-                    if (clientX !== undefined && clientY !== undefined) {
-                        updateFloatingBlockPosition(clientX, clientY);
-                    }
-                }
-                renderTray();
             }
+            renderTray();
         }
 
         function getSelectedBlock() {
@@ -1261,7 +1194,6 @@
         function gameOver() {
             isGameOver = true;
             selectedBlockIdx = -1;
-            hideFloatingBlock();
             renderTray();
             finalScoreEl.textContent = score;
 
@@ -1287,7 +1219,6 @@
             placeBlock(block.shape, block.color, row, col);
             availableBlocks.splice(blockIdx, 1);
             selectedBlockIdx = -1;
-            hideFloatingBlock();
             clearPreview();
             renderBoard();
 
@@ -1422,147 +1353,22 @@
             lastHoverCol = -1;
         }
 
-        // ─── Floating Block Functions ────────────────────────────────
-
-        function showFloatingBlock(block) {
-            if (!floatingBlockEl) return;
-            floatingBlockEl.innerHTML = '';
-
-            // Dapatkan ukuran cell papan
-            const firstCell = boardEl.querySelector('.cell');
-            let cellSize = 30;
-            if (firstCell) {
-                const rect = firstCell.getBoundingClientRect();
-                cellSize = rect.width;
-            }
-
-            const gridDiv = document.createElement('div');
-            gridDiv.className = 'block-grid';
-            gridDiv.style.gridTemplateColumns = `repeat(${block.shape[0].length}, ${cellSize}px)`;
-
-            for (let r = 0; r < block.shape.length; r++) {
-                for (let c = 0; c < block.shape[r].length; c++) {
-                    const cell = document.createElement('div');
-                    cell.className = 'block-cell';
-                    cell.style.width = cellSize + 'px';
-                    cell.style.height = cellSize + 'px';
-                    if (block.shape[r][c]) {
-                        cell.classList.add('filled-bc');
-                        cell.style.background = block.color;
-                    } else {
-                        cell.classList.add('empty-bc');
-                    }
-                    gridDiv.appendChild(cell);
-                }
-            }
-
-            floatingBlockEl.appendChild(gridDiv);
-            floatingBlockEl.style.display = 'flex';
-            floatingBlockData = block;
-            floatingCellSize = cellSize;
-            isFloating = true;
-        }
-
-        function hideFloatingBlock() {
-            if (!floatingBlockEl) return;
-            floatingBlockEl.style.display = 'none';
-            floatingBlockEl.innerHTML = '';
-            isFloating = false;
-            floatingBlockData = null;
-            floatingBlockEl.classList.remove('invalid');
-        }
-
-        function updateFloatingBlockPosition(clientX, clientY) {
-            if (!isFloating || !floatingBlockEl) return;
-            const gridDiv = floatingBlockEl.querySelector('.block-grid');
-            if (!gridDiv) return;
-            const w = gridDiv.offsetWidth;
-            const h = gridDiv.offsetHeight;
-
-            // Cek apakah cursor di atas board
-            const el = document.elementFromPoint(clientX, clientY);
-            const cell = el?.closest('.cell');
-            if (cell) {
-                const row = parseInt(cell.dataset.row);
-                const col = parseInt(cell.dataset.col);
-                if (!isNaN(row) && !isNaN(col)) {
-                    const block = getSelectedBlock();
-                    if (block) {
-                        const shape = block.shape;
-                        const pr = Math.max(0, Math.min(GRID_SIZE - shape.length, row));
-                        const pc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, col));
-                        const targetCell = getBoardCell(pr, pc);
-                        if (targetCell) {
-                            const rect = targetCell.getBoundingClientRect();
-                            const gapVal = getComputedStyle(document.documentElement).getPropertyValue('--grid-gap').trim();
-                            const gap = gapVal ? parseInt(gapVal) : 3;
-                            // Snap ke grid dengan cek validitas
-                            const valid = canPlace(shape, pr, pc);
-                            floatingBlockEl.classList.toggle('invalid', !valid);
-                            floatingBlockEl.style.left = rect.left + 'px';
-                            floatingBlockEl.style.top = rect.top + 'px';
-                            return;
-                        }
-                    }
-                }
-            }
-
-            // Default: di tengah cursor
-            floatingBlockEl.classList.remove('invalid');
-            floatingBlockEl.style.left = (clientX - Math.floor(w / 2)) + 'px';
-            floatingBlockEl.style.top = (clientY - Math.floor(h / 2)) + 'px';
-        }
-
-        function deselectBlock() {
-            if (selectedBlockIdx >= 0) {
-                selectedBlockIdx = -1;
-                hideFloatingBlock();
-                clearPreview();
-                renderTray();
-            }
-        }
-
-        function onDocumentMouseMove(e) {
-            if (isFloating) {
-                updateFloatingBlockPosition(e.clientX, e.clientY);
-            }
-        }
-
-        function onDocumentTouchMove(e) {
-            if (isFloating) {
-                const touch = e.touches[0];
-                if (touch) {
-                    updateFloatingBlockPosition(touch.clientX, touch.clientY);
-                }
-            }
-        }
-
-        function onDocumentMouseUp(e) {
-            if (isAnimating || isGameOver || !isFloating) return;
-            const block = getSelectedBlock();
-            if (!block) return;
-
-            const shape = block.shape;
-            // Cek apakah cursor di atas cell board saat release
-            const el = document.elementFromPoint(e.clientX, e.clientY);
-            const cell = el?.closest('.cell');
-            if (cell) {
-                const row = parseInt(cell.dataset.row);
-                const col = parseInt(cell.dataset.col);
-                if (!isNaN(row) && !isNaN(col)) {
-                    const pr = Math.max(0, Math.min(GRID_SIZE - shape.length, row));
-                    const pc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, col));
-                    if (canPlace(shape, pr, pc)) {
-                        tryPlaceBlock(selectedBlockIdx, pr, pc);
-                        return;
-                    }
-                }
-            }
-            // Release di luar board atau invalid -> batal
-            deselectBlock();
-        }
-
+        let touchStartX = 0, touchStartY = 0;
         let touchTargetRow = -1, touchTargetCol = -1;
+
+        function onTouchStart(e) {
+            if (isAnimating || isGameOver) return;
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            const cell = target?.closest('.cell');
+            if (cell) {
+                touchTargetRow = parseInt(cell.dataset.row);
+                touchTargetCol = parseInt(cell.dataset.col);
+            }
+        }
 
         function onTouchMove(e) {
             e.preventDefault();
@@ -1591,28 +1397,17 @@
             showPreview(shape, dr, dc, valid);
         }
 
-        function onDocumentTouchEnd(e) {
-            if (isAnimating || isGameOver || !isFloating) return;
+        function onTouchEnd(e) {
+            if (isAnimating || isGameOver) return;
             const block = getSelectedBlock();
             if (!block) return;
 
-            // Gunakan lastHoverRow/lastHoverCol yang di-set oleh onTouchMove
-            if (lastHoverRow >= 0 && lastHoverCol >= 0) {
-                const shape = block.shape;
-                const pr = Math.max(0, Math.min(GRID_SIZE - shape.length, lastHoverRow));
-                const pc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, lastHoverCol));
-                if (canPlace(shape, pr, pc)) {
-                    tryPlaceBlock(selectedBlockIdx, pr, pc);
-                    touchTargetRow = -1;
-                    touchTargetCol = -1;
-                    lastHoverRow = -1;
-                    lastHoverCol = -1;
-                    clearPreview();
-                    return;
-                }
-            }
-            // Release di luar board atau invalid -> batal
-            deselectBlock();
+            const shape = block.shape;
+            const dr = Math.max(0, Math.min(GRID_SIZE - shape.length, touchTargetRow));
+            const dc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, touchTargetCol));
+
+            tryPlaceBlock(selectedBlockIdx, dr, dc);
+
             touchTargetRow = -1;
             touchTargetCol = -1;
             lastHoverRow = -1;
