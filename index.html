@@ -879,6 +879,7 @@
         let lastHoverRow = -1;
         let lastHoverCol = -1;
         let touchPos = null;
+        let isTouchEvent = false;
 
         let boardEl, trayEl, scoreValEl, bestValEl, comboPopupEl;
         let gameOverOverlay, finalScoreEl, newBestEl, finalBestEl, finalBestValEl;
@@ -1307,6 +1308,10 @@
         }
 
         function onBoardClick(e) {
+            if (isTouchEvent) {
+                isTouchEvent = false;
+                return;
+            }
             if (isAnimating || isGameOver) return;
             const block = getSelectedBlock();
             if (!block) return;
@@ -1358,6 +1363,7 @@
 
         function onTouchStart(e) {
             if (isAnimating || isGameOver) return;
+            isTouchEvent = true;
             const touch = e.touches[0];
             touchStartX = touch.clientX;
             touchStartY = touch.clientY;
@@ -1368,11 +1374,28 @@
                 touchTargetRow = parseInt(cell.dataset.row);
                 touchTargetCol = parseInt(cell.dataset.col);
             }
+
+            // Also start preview immediately for quick tap
+            const block = getSelectedBlock();
+            if (block && cell) {
+                const row = parseInt(cell.dataset.row);
+                const col = parseInt(cell.dataset.col);
+                if (!isNaN(row) && !isNaN(col)) {
+                    const shape = block.shape;
+                    const dr = Math.max(0, Math.min(GRID_SIZE - shape.length, row));
+                    const dc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, col));
+                    const valid = canPlace(shape, dr, dc);
+                    showPreview(shape, dr, dc, valid);
+                    lastHoverRow = dr;
+                    lastHoverCol = dc;
+                }
+            }
         }
 
         function onTouchMove(e) {
             e.preventDefault();
             if (isAnimating || isGameOver) return;
+            isTouchEvent = true;
             const block = getSelectedBlock();
             if (!block) return;
 
@@ -1398,21 +1421,37 @@
         }
 
         function onTouchEnd(e) {
+            e.preventDefault();
             if (isAnimating || isGameOver) return;
             const block = getSelectedBlock();
-            if (!block) return;
+            if (!block) {
+                // Reset touch flag after delay so synthetic clicks are caught
+                setTimeout(() => { isTouchEvent = false; }, 350);
+                return;
+            }
 
-            const shape = block.shape;
-            const dr = Math.max(0, Math.min(GRID_SIZE - shape.length, touchTargetRow));
-            const dc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, touchTargetCol));
-
-            tryPlaceBlock(selectedBlockIdx, dr, dc);
+            // Use lastHoverRow/lastHoverCol from touch drag, or fallback to touchTargetRow/Col for quick tap
+            let placeRow = lastHoverRow;
+            let placeCol = lastHoverCol;
+            if (placeRow < 0 || placeCol < 0) {
+                placeRow = touchTargetRow;
+                placeCol = touchTargetCol;
+            }
+            if (placeRow >= 0 && placeCol >= 0) {
+                const shape = block.shape;
+                const dr = Math.max(0, Math.min(GRID_SIZE - shape.length, placeRow));
+                const dc = Math.max(0, Math.min(GRID_SIZE - shape[0].length, placeCol));
+                tryPlaceBlock(selectedBlockIdx, dr, dc);
+            }
 
             touchTargetRow = -1;
             touchTargetCol = -1;
             lastHoverRow = -1;
             lastHoverCol = -1;
             clearPreview();
+
+            // Reset touch flag after delay so synthetic click event is caught
+            setTimeout(() => { isTouchEvent = false; }, 350);
         }
 
         document.addEventListener('DOMContentLoaded', init);
